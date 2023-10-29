@@ -3,6 +3,7 @@
 #include <map>
 #include <stdint.h>
 #include <string>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -10,7 +11,7 @@ template<typename T>
 class Pool {
 public:
     Pool()
-        : m_index(-1)
+        : m_index(0)
     {
     }
 
@@ -18,10 +19,10 @@ public:
     uint64_t put(Args&&... args)
     {
         m_pool.push_back(T(std::forward<Args>(args)...));
-        return ++m_index;
+        return m_index++;
     }
 
-    T const* get(uint64_t index) const
+    T* get(uint64_t index)
     {
         if (index > m_index) {
             return nullptr;
@@ -40,12 +41,15 @@ enum class Instruction : uint8_t {
     I64Const,
     F64Const,
     Pop,
+    SetGlobal,
+    GetGlobal,
 };
 
 enum class NumbTrap : uint8_t {
     StackOverflow,
     StackUnderflow,
     InvalidOperand,
+    GlobalNotFound,
     OK,
 };
 
@@ -54,15 +58,23 @@ enum class NumbTrap : uint8_t {
 
 class Object;
 
+struct Undefined {
+};
+
 class Value {
 public:
     enum class Type {
+        Undefined,
         I64,
         F64,
         Object,
     };
 
-    Value() { }
+    Value()
+        : m_type(Type::Undefined)
+        , m_data(Undefined {})
+    {
+    }
 
     Value(int64_t i64)
         : m_type(Type::I64)
@@ -92,7 +104,7 @@ public:
 
 private:
     Type m_type;
-    std::variant<int64_t, double, Object*> m_data;
+    std::variant<Undefined, int64_t, double, Object*> m_data;
 };
 
 struct Object {
@@ -107,6 +119,8 @@ public:
     uint64_t put_i64(int64_t);
 
     uint64_t put_f64(double);
+
+    uint64_t put_global(Value value);
 
     void set_program(std::vector<uint8_t>);
 
@@ -139,6 +153,7 @@ private:
     std::vector<Value> m_stack;
     std::vector<uint8_t> m_program;
 
+    Pool<Value> m_global;
     Pool<int64_t> m_i64_pool;
     Pool<double> m_f64_pool;
 };

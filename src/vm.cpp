@@ -11,14 +11,19 @@ NumbVm::NumbVm()
     m_stack.reserve(2048);
 }
 
-size_t NumbVm::put_i64(int64_t i64)
+uint64_t NumbVm::put_i64(int64_t i64)
 {
     return m_i64_pool.put(i64);
 }
 
-size_t NumbVm::put_f64(double f64)
+uint64_t NumbVm::put_f64(double f64)
 {
     return m_f64_pool.put(f64);
+}
+
+uint64_t NumbVm::put_global(Value value)
+{
+    return m_global.put(std::move(value));
 }
 
 void NumbVm::set_program(std::vector<uint8_t> program)
@@ -40,16 +45,19 @@ void NumbVm::execute()
 void NumbVm::dump_stack()
 {
     for (auto i = 0; i <= m_sp; i++) {
-        std::cout << "sp: " << i << " ";
+        std::cout << "sp: " << i << " -> ";
         switch (m_stack[i].type()) {
-            case Value::Type::I64:
-                std::cout << m_stack[i].as_i64() << '\n';
-                break;
-            case Value::Type::F64:
-                std::cout << m_stack[i].as_f64() << '\n';
-                break;
-            case Value::Type::Object:
-                std::cout << m_stack[i].as_object() << '\n';
+        case Value::Type::Undefined:
+            std::cout << "undefined" << '\n';
+            break;
+        case Value::Type::I64:
+            std::cout << m_stack[i].as_i64() << '\n';
+            break;
+        case Value::Type::F64:
+            std::cout << m_stack[i].as_f64() << '\n';
+            break;
+        case Value::Type::Object:
+            std::cout << m_stack[i].as_object() << '\n';
         }
     }
 }
@@ -70,7 +78,7 @@ NumbTrap NumbVm::eval()
         }
 
         auto* constant = m_i64_pool.get(index);
-        if (!constant) {
+        if (constant == nullptr) {
             return NumbTrap::InvalidOperand;
         }
 
@@ -85,7 +93,7 @@ NumbTrap NumbVm::eval()
         }
 
         auto* constant = m_f64_pool.get(index);
-        if (!constant) {
+        if (constant == nullptr) {
             return NumbTrap::InvalidOperand;
         }
 
@@ -93,6 +101,47 @@ NumbTrap NumbVm::eval()
         break;
     }
     case Instruction::Pop: {
+        return pop();
+        break;
+    }
+    case Instruction::SetGlobal: {
+        uint64_t index = 0;
+
+        for (int i = 0; i < 8; i++) {
+            index |= static_cast<uint64_t>(fetch()) << (i * 8);
+        }
+
+        auto* global = m_global.get(index);
+        if (global == nullptr) {
+            return NumbTrap::GlobalNotFound;
+        }
+
+        if (m_sp < 0) {
+            return NumbTrap::StackUnderflow;
+        }
+
+        *global = m_stack[m_sp];
+        return pop();
+
+        break;
+    }
+    case Instruction::GetGlobal: {
+        uint64_t index = 0;
+
+        for (int i = 0; i < 8; i++) {
+            index |= static_cast<uint64_t>(fetch()) << (i * 8);
+        }
+
+        auto* global = m_global.get(index);
+        if (global == nullptr) {
+            return NumbTrap::GlobalNotFound;
+        }
+
+        if (m_sp >= static_cast<int64_t>(m_stack.capacity())) {
+            return NumbTrap::StackOverflow;
+        }
+
+        m_stack[++m_sp] = *global;
         break;
     }
     }
@@ -144,6 +193,11 @@ void NumbVm::catch_trap(NumbTrap trap)
     }
     case NumbTrap::InvalidOperand: {
         emit_trap("invalid operand at pc: {}", m_pc);
+        m_halt = true;
+        break;
+    }
+    case NumbTrap::GlobalNotFound: {
+        emit_trap("global not found", m_pc);
         m_halt = true;
         break;
     }
